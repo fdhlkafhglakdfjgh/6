@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Праздничная сцена</title>
+
+    <!-- Подключение Three.js и GLTFLoader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            height: 100vh;
+            background: radial-gradient(ellipse at center, #001a4d, #000033);
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            font-size: 1.5em;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+<!-- Статус для отладки -->
+<p id="status">Загрузка...</p>
+
+<script>
+    // === Настройка Three.js сцены ===
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+
+    // Рендерер на полный экран
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Установка камеры
+    camera.position.z = 5;
+
+    // Добавление света в сцену
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1);  // Общее освещение
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);  // Направленный свет
+    directionalLight.position.set(10, 10, 10);
+    scene.add(directionalLight);
+
+    // Переменная для 3D-модели
+    let tree;
+
+    // Загрузка 3D-модели
+    const loader = new THREE.GLTFLoader();
+    loader.load(
+        'tree_model.glb',   // Название файла 3D-модели
+        function (gltf) {
+            tree = gltf.scene;
+            tree.scale.set(2, 2, 2);  // Измените масштаб при необходимости
+            scene.add(tree);
+            document.getElementById('status').innerText = "Модель загружена!";
+        },
+        undefined,
+        function (error) {
+            console.error("Ошибка загрузки модели:", error);
+            document.getElementById('status').innerText = "Ошибка загрузки модели.";
+        }
+    );
+
+    // === Анимация ===
+    let isSmiling = false;
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // Вращение модели при улыбке
+        if (tree && isSmiling) {
+            tree.rotation.y += 0.01;  // Вращение только по горизонтали
+        }
+
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    // === Настройка камеры ===
+    async function setupCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoElement.srcObject = stream;
+            document.getElementById('status').innerText = "Камера активна.";
+            return new Promise(resolve => videoElement.onloadedmetadata = () => resolve(videoElement));
+        } catch (error) {
+            console.error("Ошибка при доступе к камере:", error);
+            document.getElementById('status').innerText = "Ошибка доступа к камере.";
+        }
+    }
+
+    // Создание элемента для камеры
+    const videoElement = document.createElement("video");
+    videoElement.width = 640;
+    videoElement.height = 480;
+    videoElement.autoplay = true;
+    videoElement.playsInline = true;
+    videoElement.style.display = "none";
+    document.body.appendChild(videoElement);
+
+    // === Запуск распознавания лица ===
+    async function startFaceMeshDetection() {
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onResults);
+
+        await setupCamera();
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => await faceMesh.send({ image: videoElement }),
+            width: 640,
+            height: 480
+        });
+
+        camera.start();
+    }
+
+    function calculateSmile(landmarks) {
+        const leftMouth = landmarks[61];
+        const rightMouth = landmarks[291];
+        const topMouth = landmarks[13];
+        const bottomMouth = landmarks[14];
+
+        const mouthWidth = Math.hypot(rightMouth.x - leftMouth.x, rightMouth.y - leftMouth.y);
+        const mouthHeight = Math.hypot(bottomMouth.x - topMouth.x, bottomMouth.y - topMouth.y);
+
+        // Проверка на улыбку
+        return mouthHeight / mouthWidth > 0.2;
+    }
+
+    function onResults(results) {
+        if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+            const faceLandmarks = results.multiFaceLandmarks[0];
+            isSmiling = calculateSmile(faceLandmarks);
+            document.getElementById('status').innerText = isSmiling ? "Вы улыбаетесь!" : "Улыбнитесь, чтобы вращать ёлку!";
+        }
+    }
+
+    // Запуск FaceMesh
+    startFaceMeshDetection().catch(error => console.error("Ошибка запуска FaceMesh:", error));
+
+    // Обновление размера окна
+    window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+    });
+</script>
+
+</body>
+</html>
